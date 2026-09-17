@@ -1,0 +1,855 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Control de Repuestos - Seguimiento de Guías</title>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import { getDatabase, ref, push, onValue, update, set, remove } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+  // =====================================================================
+  // >>> PEGA AQUÍ TU CONFIGURACIÓN DE FIREBASE <<<
+  // Puedes reutilizar el mismo proyecto de "EMA Control de Motores"
+  // (así todo queda centralizado) o crear un proyecto nuevo.
+  // La reemplazas y guardas — no necesitas tocar nada más del archivo.
+  // =====================================================================
+  const firebaseConfig = {
+    apiKey: "AIzaSyAtr1E-WrhT6srXzSMak_Gj4SvHs0ky2oo",
+    authDomain: "seguimiento-de-insumos.firebaseapp.com",
+    databaseURL: "https://seguimiento-de-insumos-default-rtdb.firebaseio.com",
+    projectId: "seguimiento-de-insumos",
+    storageBucket: "seguimiento-de-insumos.firebasestorage.app",
+    messagingSenderId: "463842715194",
+    appId: "1:463842715194:web:c0d6ca1cd44ea648493703"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getDatabase(app);
+  window._db = db;
+  window._fb = { ref, push, onValue, update, set, remove };
+
+  window.dispatchEvent(new Event('firebase-ready'));
+</script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<style>
+  :root{
+    --bg: #0f1a14;
+    --panel: #16241c;
+    --panel-2: #1c2e23;
+    --line: #2a3d31;
+    --text: #e9efe9;
+    --muted: #93a89a;
+    --accent: #ff8a3d;
+    --ok: #3ecf8e;
+    --warn: #f2c94c;
+    --danger: #ff5c5c;
+    --font-display: 'Zilla Slab', Georgia, serif;
+    --font-body: 'Inter', -apple-system, sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:var(--font-body); -webkit-font-smoothing:antialiased;
+  }
+  h1,h2,h3{font-family:var(--font-display); font-weight:700; margin:0;}
+  header{
+    padding:18px 16px 14px; border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg, var(--panel-2), var(--bg));
+    position:sticky; top:0; z-index:10;
+  }
+  header .eyebrow{font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--accent); font-weight:600;}
+  header h1{font-size:22px; margin-top:2px;}
+  header .sub{color:var(--muted); font-size:13px; margin-top:2px;}
+
+  .role-bar{display:flex; gap:8px; padding:12px 16px; flex-wrap:wrap; border-bottom:1px solid var(--line); background:var(--panel);}
+  .role-btn{
+    flex:1; min-width:110px; padding:10px 8px; border-radius:10px; border:1px solid var(--line);
+    background:var(--bg); color:var(--muted); font-size:13px; font-weight:600; text-align:center;
+    cursor:pointer; transition:.15s;
+  }
+  .role-btn.active{background:var(--accent); color:#1a1108; border-color:var(--accent);}
+
+  main{padding:16px; max-width:720px; margin:0 auto; padding-bottom:80px;}
+
+  .card{
+    background:var(--panel); border:1px solid var(--line); border-radius:14px;
+    padding:14px; margin-bottom:12px;
+  }
+  .card-head{display:flex; justify-content:space-between; align-items:flex-start; gap:8px;}
+  .oc-num{font-family:var(--font-display); font-size:18px; font-weight:700;}
+  .badge{
+    font-size:11px; font-weight:700; padding:4px 9px; border-radius:999px; white-space:nowrap;
+    text-transform:uppercase; letter-spacing:.04em;
+  }
+  .badge.ok{background:rgba(62,207,142,.15); color:var(--ok);}
+  .badge.warn{background:rgba(242,201,76,.15); color:var(--warn);}
+  .badge.danger{background:rgba(255,92,92,.15); color:var(--danger); animation:pulse 2s infinite;}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.55;}}
+
+  .meta{color:var(--muted); font-size:13px; margin-top:6px; line-height:1.5;}
+  .meta b{color:var(--text); font-weight:600;}
+  .articulos{margin-top:8px; font-size:13px; color:var(--text); background:var(--bg); border-radius:8px; padding:8px 10px;}
+  .timeline{display:flex; gap:4px; margin-top:10px; flex-wrap:wrap;}
+  .step{
+    font-size:10.5px; padding:4px 8px; border-radius:6px; background:var(--bg); color:var(--muted);
+    border:1px solid var(--line);
+  }
+  .step.done{color:var(--ok); border-color:rgba(62,207,142,.35);}
+  .step.current{color:var(--accent); border-color:var(--accent); font-weight:700;}
+
+  .actions{display:flex; gap:8px; margin-top:12px; flex-wrap:wrap;}
+  .btn{
+    flex:1; min-width:130px; padding:12px 10px; border-radius:10px; border:none;
+    font-weight:700; font-size:13.5px; cursor:pointer; transition:.15s;
+  }
+  .btn-primary{background:var(--accent); color:#1a1108;}
+  .btn-primary:active{transform:scale(.98);}
+  .btn-ghost{background:var(--bg); color:var(--text); border:1px solid var(--line);}
+
+  form.new-form{display:flex; flex-direction:column; gap:10px;}
+  label{font-size:12px; color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.04em;}
+  input, select, textarea{
+    width:100%; padding:11px; border-radius:9px; border:1px solid var(--line);
+    background:var(--bg); color:var(--text); font-size:14px; font-family:var(--font-body);
+  }
+  textarea{min-height:70px; resize:vertical;}
+  .field{display:flex; flex-direction:column; gap:4px;}
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+
+  .empty{text-align:center; color:var(--muted); padding:40px 20px; font-size:14px;}
+  .empty b{display:block; color:var(--text); font-size:16px; margin-bottom:4px; font-family:var(--font-display);}
+
+  .toggle-form{
+    display:flex; align-items:center; justify-content:center; gap:6px;
+    padding:12px; border-radius:12px; border:1px dashed var(--line); color:var(--accent);
+    font-weight:700; cursor:pointer; margin-bottom:14px; font-size:14px;
+  }
+
+  .filter-row{display:flex; gap:8px; margin-bottom:14px; overflow-x:auto; padding-bottom:2px;}
+  .filter-chip{
+    padding:7px 12px; border-radius:999px; border:1px solid var(--line); background:var(--panel);
+    color:var(--muted); font-size:12.5px; white-space:nowrap; cursor:pointer; font-weight:600;
+  }
+  .filter-chip.active{background:var(--text); color:var(--bg); border-color:var(--text);}
+
+  select.campamento-select{margin-bottom:14px;}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="eyebrow">Grupo Camaronero · Mantenimiento</div>
+  <h1>Seguimiento de Repuestos</h1>
+  <div class="sub">De la orden de compra al ingreso en bodega</div>
+</header>
+
+<div class="role-bar" id="roleBar">
+  <div class="role-btn" data-role="admin">Admin</div>
+  <div class="role-btn" data-role="campamento">Bodeguero Campamento</div>
+</div>
+
+<main id="main">
+  <div class="empty"><b>Cargando...</b>Selecciona tu rol arriba para comenzar.</div>
+</main>
+
+<script>
+const ESTADOS = [
+  {key:'registrada', label:'Registrada'},
+  {key:'embarcado_bote', label:'Salió en Bote'},
+  {key:'verificado', label:'Verificado'},
+  {key:'ingresado_bodega', label:'Ingresado ✔'}
+];
+const CAMPAMENTOS = ["Rolesa 1","Rolesa 2","Pantrusko 1","Pantrusko 2","Caesa 1","Caesa 2","Recórcholis 1","Recórcholis 2","Fimasa 1","Fimasa 2","Fimasa 3"];
+const EMPRESAS = ["Fimasa Fincas Marinas","Camarones Rolesa","Camaronera Escalante (CAESA)","Pantrusko","Recorcholis"];
+
+let currentRole = localStorage.getItem('rol_repuestos') || null;
+let currentCampamento = localStorage.getItem('campamento_repuestos') || null;
+let verCompletadasCamp = false;
+let busquedaAdmin = '';
+let guiasData = {};
+let filtroActivo = 'pendientes';
+let lockedByUrl = false;
+
+// Si el link trae ?campamento=BASE 1 o ?rol=muelle / ?rol=admin,
+// se fija ese rol/campamento y se oculta el selector de arriba.
+// Así cada bodeguero recibe SU propio link y no puede cambiarse a otro.
+(function applyUrlLock(){
+  const params = new URLSearchParams(window.location.search);
+  const campParam = params.get('campamento');
+  const rolParam = params.get('rol');
+  if(campParam && CAMPAMENTOS.includes(campParam)){
+    currentRole = 'campamento';
+    currentCampamento = campParam;
+    lockedByUrl = true;
+  } else if(rolParam && ['admin','muelle','campamento'].includes(rolParam)){
+    currentRole = rolParam;
+    lockedByUrl = true;
+  }
+})();
+
+// Compatibilidad: guías antiguas guardaban faltantes como texto simple, no como {descripcion,cantidad}
+function normalizarFaltante(f){
+  if(typeof f === 'string') return { descripcion: f, cantidad: 1 };
+  return f;
+}
+
+function daysSince(ts){
+  if(!ts) return 0;
+  return Math.floor((Date.now()-ts)/(1000*60*60*24));
+}
+
+function estadoIndex(estado){
+  return ESTADOS.findIndex(e=>e.key===estado);
+}
+
+function alertLevel(g){
+  if(g.completo===false) return 'danger'; // hay ítems faltantes reportados, sin importar el estado
+  if(g.estado==='ingresado_bodega') return 'ok'; // completado y sin faltantes
+  const lastTs = g.timestamps[g.estado] || g.timestamps['registrada'];
+  const d = daysSince(lastTs);
+  if(d>=2) return 'danger';
+  if(d>=1) return 'warn';
+  return 'ok';
+}
+
+function setRole(role){
+  currentRole = role;
+  localStorage.setItem('rol_repuestos', role);
+  document.querySelectorAll('.role-btn').forEach(b=>b.classList.toggle('active', b.dataset.role===role));
+  render();
+}
+
+document.getElementById('roleBar').addEventListener('click', e=>{
+  const btn = e.target.closest('.role-btn');
+  if(btn) setRole(btn.dataset.role);
+});
+
+window.addEventListener('firebase-ready', ()=>{
+  const {ref, onValue} = window._fb;
+  const guiasRef = ref(window._db, 'guias');
+  onValue(guiasRef, snap=>{
+    const raw = snap.val() || {};
+    // Compatibilidad con datos antiguos: normaliza SOLO en memoria (para que se vea bien),
+    // nunca escribe nada en la base de datos.
+    Object.values(raw).forEach(g=>{
+      if(g.estado === 'recibido_campamento') g.estado = 'embarcado_bote'; // paso eliminado, se re-verifica
+      if(Array.isArray(g.faltantes)) g.faltantes = g.faltantes.map(normalizarFaltante);
+    });
+    guiasData = raw;
+    render();
+  });
+  if(lockedByUrl){
+    document.getElementById('roleBar').style.display = 'none';
+  } else if(currentRole){
+    document.querySelectorAll('.role-btn').forEach(b=>b.classList.toggle('active', b.dataset.role===currentRole));
+  }
+  render();
+});
+
+function updateEstado(id, nuevoEstado, extra={}){
+  const {ref, update} = window._fb;
+  const updates = {
+    estado: nuevoEstado,
+    [`timestamps/${nuevoEstado}`]: Date.now(),
+    ...extra
+  };
+  update(ref(window._db, 'guias/'+id), updates);
+}
+
+
+
+function renderTimeline(g){
+  const idx = estadoIndex(g.estado);
+  return `<div class="timeline">${ESTADOS.map((e,i)=>{
+    let cls = i<idx ? 'done' : (i===idx ? 'current' : '');
+    return `<div class="step ${cls}">${e.label}</div>`;
+  }).join('')}</div>`;
+}
+
+function renderCard(id, g, actionsHtml, mostrarBorrar){
+  const level = alertLevel(g);
+  let badgeLabel = level==='danger' ? `${daysSince(g.timestamps[g.estado])}d sin avanzar` : (level==='warn' ? `${daysSince(g.timestamps[g.estado])}d` : 'Al día');
+  let badgeClass = level;
+  if(g.completo===false){
+    badgeLabel = `⚠ Faltan ${g.faltantes.length} ítem(s)`;
+    badgeClass = 'danger';
+  }
+  return `
+  <div class="card">
+    <div class="card-head">
+      <div>
+        <div class="oc-num">${g.proveedor || 'Proveedor no especificado'}</div>
+        <div class="meta">${g.empresa||''}</div>
+      </div>
+      <div class="badge ${badgeClass}">${badgeLabel}</div>
+    </div>
+    <div class="meta">Ruta: <b>${g.ruta||'—'}</b> · Destino: <b>${g.campamentoDestino||'—'}</b></div>
+    ${g.observacion ? `<div class="meta">${g.observacion}</div>` : ''}
+    ${g.articulos ? `<div class="articulos">${g.articulos.replace(/\n/g,'<br>')}</div>` : ''}
+    ${g.faltantes && g.faltantes.length ? `<div class="meta" style="color:var(--danger); font-weight:700; margin-top:6px;">Faltó: ${g.faltantes.map(normalizarFaltante).map(f=>`${f.cantidad}x ${f.descripcion}`).join(', ')}</div>` : ''}
+    ${g.notaCampamento ? `<div class="meta" style="margin-top:6px; font-style:italic;">📝 Nota del bodeguero: ${g.notaCampamento}</div>` : ''}
+    ${g.numeroIngreso ? `<div class="meta" style="margin-top:6px;">🔢 Nº Ingreso Bodega: <b>${g.numeroIngreso}</b></div>` : ''}
+    ${renderTimeline(g)}
+    ${actionsHtml||''}
+    <div class="inline-zone" id="zone-${id}"></div>
+    ${mostrarBorrar ? `<div class="actions" style="margin-top:10px; border-top:1px dashed var(--line); padding-top:10px;">
+      <button class="btn btn-ghost" style="color:var(--danger); border-color:var(--danger);" data-action="borrar" data-id="${id}">🗑️ Borrar guía</button>
+    </div>` : ''}
+  </div>`;
+}
+
+function render(){
+  const main = document.getElementById('main');
+  if(!currentRole){
+    main.innerHTML = `<div class="empty"><b>Selecciona tu rol</b>Elige arriba: Admin, Bodeguero de Muelle o Bodeguero de Campamento.</div>`;
+    return;
+  }
+  if(currentRole==='admin') return renderAdmin(main);
+  if(currentRole==='campamento') return renderCampamento(main);
+}
+
+// ---------- ADMIN ----------
+function renderAdmin(main){
+  const entries = Object.entries(guiasData).sort((a,b)=> (b[1].timestamps?.registrada||0)-(a[1].timestamps?.registrada||0));
+  const pendientesCount = entries.filter(([id,g])=>g.completo===false).length;
+
+  const q = busquedaAdmin.trim().toLowerCase();
+  const buscando = q!=='';
+  const porFiltro = filtroActivo==='pendientes' ? entries.filter(([id,g])=> !(g.estado==='ingresado_bodega' && g.completo!==false)) :
+     filtroActivo==='alertas' ? entries.filter(([id,g])=>alertLevel(g)!=='ok') :
+     filtroActivo==='incompletas' ? entries.filter(([id,g])=>g.completo===false) :
+     filtroActivo==='ingresado_bodega' ? entries.filter(([id,g])=>g.estado==='ingresado_bodega' && g.completo!==false) :
+     entries.filter(([id,g])=>g.estado===filtroActivo);
+  const filtered = buscando
+    ? porFiltro.filter(([id,g])=> [g.proveedor,g.empresa,g.campamentoDestino,g.numeroIngreso,g.observacion,g.ruta]
+        .filter(Boolean).some(v=> String(v).toLowerCase().includes(q)))
+    : porFiltro;
+
+  main.innerHTML = `
+    <div class="toggle-form" id="toggleUpload">📷 Subir foto(s) de guía(s)</div>
+    <div class="toggle-form" id="toggleImport" style="margin-top:8px; border-color:var(--accent); color:var(--text);">📥 Importar guías (pegar texto de Claude)</div>
+    <div class="toggle-form" id="toggleReporte" style="margin-top:8px; border-color:var(--danger); color:var(--text);">📊 Generar reporte de pendientes (${pendientesCount})</div>
+    <input type="file" id="fotoInput" accept="image/*" multiple style="display:none;">
+    <div id="importZone"></div>
+    <div id="reviewZone"></div>
+    <div id="reporteZone"></div>
+    <input type="text" id="buscarGuia" placeholder="🔍 Buscar por proveedor, empresa, campamento o Nº de ingreso..." value="${busquedaAdmin}" style="width:100%; margin:12px 0;">
+    <div class="filter-row">
+          <div class="filter-chip ${filtroActivo==='pendientes'?'active':''}" data-f="pendientes">Pendientes (${entries.filter(([id,g])=> !(g.estado==='ingresado_bodega' && g.completo!==false)).length})</div>
+          <div class="filter-chip ${filtroActivo==='alertas'?'active':''}" data-f="alertas">⚠ Alertas (${entries.filter(([id,g])=>alertLevel(g)!=='ok').length})</div>
+          <div class="filter-chip ${filtroActivo==='incompletas'?'active':''}" data-f="incompletas">⚠ Incompletas (${entries.filter(([id,g])=>g.completo===false).length})</div>
+          <div class="filter-chip ${filtroActivo==='ingresado_bodega'?'active':''}" data-f="ingresado_bodega">Completadas (${entries.filter(([id,g])=>g.estado==='ingresado_bodega' && g.completo!==false).length})</div>
+        </div>
+    ${buscando ? `<div class="meta" style="margin-bottom:10px;">Resultados para "<b>${busquedaAdmin}</b>" en esta pestaña (${filtered.length}) · <span style="text-decoration:underline; cursor:pointer;" id="limpiarBusqueda">Limpiar búsqueda</span></div>` : ''}
+    <div id="list">${filtered.length ? filtered.map(([id,g])=>renderCard(id,g,'',true)).join('') : '<div class="empty"><b>Sin resultados</b>No hay guías que coincidan.</div>'}</div>
+  `;
+
+  document.getElementById('toggleUpload').onclick = ()=> document.getElementById('fotoInput').click();
+  document.getElementById('fotoInput').onchange = (e)=> procesarFotos(Array.from(e.target.files));
+  document.getElementById('toggleImport').onclick = ()=>{
+    const zone = document.getElementById('importZone');
+    zone.innerHTML = zone.innerHTML ? '' : formularioImportar();
+    if(zone.innerHTML) attachImportHandler();
+  };
+  document.getElementById('toggleReporte').onclick = ()=>{
+    const zone = document.getElementById('reporteZone');
+    zone.innerHTML = zone.innerHTML ? '' : formularioReporte();
+    if(zone.innerHTML) attachReporteHandler();
+  };
+  main.querySelectorAll('[data-action="borrar"]').forEach(btn=>{
+    btn.onclick = ()=> borrarGuia(btn.dataset.id);
+  });
+  const searchInput = document.getElementById('buscarGuia');
+  searchInput.oninput = (e)=>{ busquedaAdmin = e.target.value; renderAdmin(main); };
+  if(busquedaAdmin){ searchInput.focus(); searchInput.setSelectionRange(busquedaAdmin.length, busquedaAdmin.length); }
+  if(buscando){
+    document.getElementById('limpiarBusqueda').onclick = ()=>{ busquedaAdmin=''; renderAdmin(main); };
+  }
+  document.querySelectorAll('.filter-chip').forEach(chip=>{
+    chip.onclick = ()=>{ filtroActivo = chip.dataset.f; renderAdmin(main); };
+  });
+}
+
+function borrarGuia(id){
+  const g = guiasData[id];
+  if(!g) return;
+  const nombre = g.proveedor || 'esta guía';
+  const destino = g.campamentoDestino || '—';
+  if(!confirm(`¿Seguro que quieres BORRAR esta guía?\n\nProveedor: ${nombre}\nDestino: ${destino}\n\nEsta acción NO se puede deshacer.`)) return;
+  const {ref, remove} = window._fb;
+  remove(ref(window._db, 'guias/'+id));
+}
+
+function generarTextoReporte(){
+  const pendientes = Object.entries(guiasData).filter(([id,g])=>g.completo===false);
+  const fecha = new Date().toLocaleDateString('es-EC', { day:'2-digit', month:'2-digit', year:'numeric' });
+  if(pendientes.length===0){
+    return `📋 REPORTE DE ÍTEMS PENDIENTES\nFecha: ${fecha}\n\nNo hay ítems pendientes en ninguna camaronera. Todo está al día. ✅`;
+  }
+  const porEmpresa = {};
+  pendientes.forEach(([id,g])=>{
+    const emp = g.empresa || 'Sin empresa especificada';
+    if(!porEmpresa[emp]) porEmpresa[emp] = [];
+    porEmpresa[emp].push(g);
+  });
+  let texto = `📋 REPORTE DE ÍTEMS PENDIENTES\nFecha: ${fecha}\n\n`;
+  Object.keys(porEmpresa).sort().forEach(emp=>{
+    texto += `🏢 ${emp.toUpperCase()}\n`;
+    porEmpresa[emp].forEach(g=>{
+      const dias = daysSince(g.timestamps[g.estado] || g.timestamps['registrada']);
+      texto += `  • ${g.campamentoDestino||'—'} — ${g.proveedor||'Proveedor no especificado'}${g.observacion ? ' ('+g.observacion+')' : ''} — ${dias}d\n`;
+      (g.faltantes||[]).map(normalizarFaltante).forEach(f=>{
+        texto += `      ⚠ Falta: ${f.cantidad}x ${f.descripcion}\n`;
+      });
+    });
+    texto += `\n`;
+  });
+  texto += `Total: ${pendientes.length} guía(s) con ítems pendientes.`;
+  return texto;
+}
+
+function formularioReporte(){
+  const texto = generarTextoReporte();
+  return `
+  <div class="card">
+    <h3 style="margin-bottom:10px;">📊 Reporte de ítems pendientes</h3>
+    <textarea id="reporteTexto" readonly style="min-height:260px; width:100%; font-family:monospace; font-size:13px;">${texto}</textarea>
+    <div class="actions">
+      <button class="btn btn-ghost" id="cerrarReporte">Cerrar</button>
+      <button class="btn btn-ghost" id="descargarReporte">⬇ Descargar .txt</button>
+      <button class="btn btn-primary" id="copiarReporte">📋 Copiar</button>
+    </div>
+  </div>`;
+}
+
+function attachReporteHandler(){
+  const zone = document.getElementById('reporteZone');
+  document.getElementById('cerrarReporte').onclick = ()=> zone.innerHTML = '';
+  document.getElementById('copiarReporte').onclick = ()=>{
+    const texto = document.getElementById('reporteTexto').value;
+    navigator.clipboard.writeText(texto).then(()=>{
+      const btn = document.getElementById('copiarReporte');
+      const original = btn.textContent;
+      btn.textContent = '✔ Copiado';
+      setTimeout(()=> btn.textContent = original, 1500);
+    }).catch(()=>{
+      document.getElementById('reporteTexto').select();
+      document.execCommand('copy');
+    });
+  };
+  document.getElementById('descargarReporte').onclick = ()=>{
+    const texto = document.getElementById('reporteTexto').value;
+    const blob = new Blob([texto], {type:'text/plain'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `reporte-pendientes-${new Date().toISOString().slice(0,10)}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+}
+
+function formularioImportar(){
+  return `
+  <div class="card">
+    <h3 style="margin-bottom:10px;">Pega aquí el texto que te dio Claude</h3>
+    <div class="meta" style="margin-bottom:8px;">Sube las fotos de las guías en el chat con Claude, pídele "conviértelas a JSON para la app", copia el bloque completo y pégalo aquí.</div>
+    <textarea id="jsonImportBox" style="min-height:160px; font-family:monospace; font-size:12px;" placeholder='[{"proveedor":"...","empresa":"...","campamentoDestino":"...","articulos":"..."}]'></textarea>
+    <div class="actions">
+      <button class="btn btn-ghost" id="cancelarImport">Cancelar</button>
+      <button class="btn btn-primary" id="confirmarImport">Importar todas</button>
+    </div>
+    <div id="importResultado" class="meta" style="margin-top:8px;"></div>
+  </div>`;
+}
+
+function attachImportHandler(){
+  document.getElementById('cancelarImport').onclick = ()=> document.getElementById('importZone').innerHTML = '';
+  document.getElementById('confirmarImport').onclick = ()=>{
+    const raw = document.getElementById('jsonImportBox').value;
+    const resultEl = document.getElementById('importResultado');
+    try{
+      const clean = raw.replace(/```json|```/g,'').trim();
+      const lista = JSON.parse(clean);
+      if(!Array.isArray(lista)) throw new Error('No es una lista');
+      lista.forEach(item=> crearGuiaEmbarcada({
+        proveedor: item.proveedor||'',
+        empresa: EMPRESAS.includes(item.empresa) ? item.empresa : '',
+        campamentoDestino: CAMPAMENTOS.includes(item.campamentoDestino) ? item.campamentoDestino : '',
+        ruta: item.ruta||'',
+        observacion: item.observacion||'',
+        articulos: item.articulos||''
+      }));
+      resultEl.style.color = 'var(--ok)';
+      resultEl.textContent = `✔ Se importaron ${lista.length} guía(s) correctamente.`;
+      setTimeout(()=> document.getElementById('importZone').innerHTML = '', 2000);
+    }catch(err){
+      resultEl.style.color = 'var(--danger)';
+      resultEl.textContent = 'El texto no tiene el formato correcto. Revisa que sea el bloque JSON completo que te dio Claude.';
+    }
+  };
+}
+
+async function procesarFotos(files){
+  const zone = document.getElementById('reviewZone');
+  for(const file of files){
+    const cardId = 'rev-'+Math.random().toString(36).slice(2);
+    const localUrl = URL.createObjectURL(file);
+    zone.insertAdjacentHTML('beforeend', `
+      <div class="card" id="${cardId}">
+        <img src="${localUrl}" style="width:100%; max-height:180px; object-fit:cover; border-radius:8px; margin-bottom:10px;">
+        <div class="meta">🔎 Detectando empresa y campamento (10-20s la primera vez)...</div>
+      </div>`);
+    try{
+      const extracted = await extraerDatosGuia(file);
+      renderReviewCard(cardId, extracted, localUrl);
+    }catch(err){
+      document.getElementById(cardId).innerHTML = `
+        <img src="${localUrl}" style="width:100%; max-height:180px; object-fit:cover; border-radius:8px; margin-bottom:10px;">
+        <div class="meta" style="color:var(--danger);">No se pudo leer el texto automáticamente. Puedes registrarla manual.</div>
+        <div class="actions"><button class="btn btn-ghost" data-action="manual" data-card="${cardId}">Registrar manual</button></div>`;
+      document.querySelector(`#${cardId} [data-action="manual"]`).onclick = ()=> renderReviewCard(cardId, {}, localUrl);
+    }
+  }
+}
+
+// Palabras clave para adivinar a qué empresa pertenece, según el texto leído
+const EMPRESA_KEYWORDS = [
+  {empresa:"Camarones Rolesa", kw:["ROLESA"]},
+  {empresa:"Fimasa Fincas Marinas", kw:["FIMASA"]},
+  {empresa:"Camaronera Escalante (CAESA)", kw:["ESCALANTE","CAESA"]},
+  {empresa:"Pantrusko", kw:["PANTRUSKO"]},
+  {empresa:"Recorcholis", kw:["RECORCHOLIS","RECÓRCHOLIS","RECORCHÓLIS"]}
+];
+
+// Mapeo de siglas usadas en las guías (impresas o a veces legibles) a nombre completo de campamento
+const CAMPAMENTO_SIGLAS = [
+  {sigla:/\bRE\s?1\b/i, campamento:"Recórcholis 1"},
+  {sigla:/\bRE\s?2\b/i, campamento:"Recórcholis 2"},
+  {sigla:/\bF\s?1\b/i, campamento:"Fimasa 1"},
+  {sigla:/\bF\s?2\b/i, campamento:"Fimasa 2"},
+  {sigla:/\bF\s?3\b/i, campamento:"Fimasa 3"},
+  {sigla:/\bP\s?1\b/i, campamento:"Pantrusko 1"},
+  {sigla:/\bP\s?2\b/i, campamento:"Pantrusko 2"},
+  {sigla:/\bC\s?1\b/i, campamento:"Caesa 1"},
+  {sigla:/\bC\s?2\b/i, campamento:"Caesa 2"},
+  {sigla:/\bR\s?1\b/i, campamento:"Rolesa 1"},
+  {sigla:/\bR\s?2\b/i, campamento:"Rolesa 2"}
+];
+
+function detectarCampamento(text){
+  const upper = text.toUpperCase();
+  for(const c of CAMPAMENTOS){
+    if(upper.includes(c.toUpperCase())) return c;
+  }
+  for(const s of CAMPAMENTO_SIGLAS){
+    if(s.sigla.test(text)) return s.campamento;
+  }
+  return '';
+}
+
+async function extraerDatosGuia(file){
+  const { data } = await Tesseract.recognize(file, 'spa');
+  const text = data.text || '';
+  const upper = text.toUpperCase();
+
+  let empresa = '';
+  for(const e of EMPRESA_KEYWORDS){
+    if(e.kw.some(k=>upper.includes(k))){ empresa = e.empresa; break; }
+  }
+
+  const campamentoDestino = detectarCampamento(text);
+
+  // Quitar líneas típicas de relleno (encabezados fijos de factura) que no aportan
+  const BOILERPLATE = /RUC|FACTURA|AUTORIZACI|CLAVE DE ACCESO|OBLIGADO A LLEVAR|CONTRIBUYENTE|AMBIENTE|EMISI[OÓ]N|PRODUCCI[OÓ]N|NORMAL$/i;
+  const lineasUtiles = text.split('\n').map(l=>l.trim()).filter(l=> l.length>2 && !BOILERPLATE.test(l));
+
+  // Proveedor: solo usar la primera línea si parece texto real (mayoría letras, no símbolos sueltos)
+  let proveedor = '';
+  const candidata = lineasUtiles[0] || '';
+  const letras = (candidata.match(/[A-Za-zÁÉÍÓÚÑáéíóúñ]/g)||[]).length;
+  if(candidata.length>=4 && letras/candidata.length > 0.6){
+    proveedor = candidata;
+  }
+
+  const facturaMatch = text.match(/FACTURA[^\d]*([\d-]{5,})/i);
+  const observacion = facturaMatch ? `Factura ${facturaMatch[1]}` : '';
+
+  return {
+    proveedor,
+    empresa,
+    campamentoDestino,
+    ruta: '',
+    observacion,
+    articulos: '' // se deja en blanco: el OCR no es confiable leyendo tablas, mejor dictar
+  };
+}
+
+// Convierte el texto libre de artículos en una lista {cantidad, descripcion}
+function parsearItems(articulosTexto){
+  const lineas = articulosTexto.split('\n').map(l=>l.trim()).filter(l=>l.length>1);
+  return lineas.map(linea=>{
+    const m = linea.match(/^(\d+)\s*[xX]?\s*(.+)$/);
+    if(m){
+      return { cantidad: parseInt(m[1]), descripcion: m[2].trim() };
+    }
+    return { cantidad: 1, descripcion: linea };
+  });
+}
+
+function renderReviewCard(cardId, ext, imgUrl){
+  const el = document.getElementById(cardId);
+  el.innerHTML = `
+    <img src="${imgUrl}" style="width:100%; max-height:180px; object-fit:cover; border-radius:8px; margin-bottom:10px;">
+    <div class="meta" style="color:var(--accent); font-weight:700; margin-bottom:6px;">Revisa y confirma:</div>
+    <div class="field"><label>Proveedor</label><input class="rf-proveedor" value="${ext.proveedor||''}" placeholder="Toca aquí y usa el 🎤 del teclado para dictar"></div>
+    <div class="grid2" style="margin-top:8px;">
+      <div class="field"><label>Empresa</label>
+        <select class="rf-empresa">
+          <option value="">Seleccionar...</option>
+          ${EMPRESAS.map(e=>`<option value="${e}" ${ext.empresa===e?'selected':''}>${e}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field"><label>Campamento destino</label>
+        <select class="rf-campamento">
+          <option value="">Seleccionar...</option>
+          ${CAMPAMENTOS.map(c=>`<option value="${c}" ${ext.campamentoDestino===c?'selected':''}>${c}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="field" style="margin-top:8px;"><label>Ruta</label><input class="rf-ruta" value="${ext.ruta||''}"></div>
+    <div class="field" style="margin-top:8px;"><label>Observación</label><input class="rf-observacion" value="${ext.observacion||''}"></div>
+    <div class="field" style="margin-top:8px;"><label>Artículos (1 línea por ítem: cantidad + descripción)</label>
+      <div class="meta" style="margin-bottom:4px;">🎤 Tip: toca el campo y usa el micrófono del teclado para dictar en vez de escribir</div>
+      <textarea class="rf-articulos" placeholder="Ej: 2 filtros de aceite&#10;1 bomba de agua">${ext.articulos||''}</textarea>
+    </div>
+    <div class="actions">
+      <button class="btn btn-ghost" data-action="descartar">Descartar</button>
+      <button class="btn btn-primary" data-action="confirmar">✔ Confirmar, ya salió en bote</button>
+    </div>
+  `;
+  el.querySelector('[data-action="descartar"]').onclick = ()=> el.remove();
+  el.querySelector('[data-action="confirmar"]').onclick = ()=>{
+    const data = {
+      proveedor: el.querySelector('.rf-proveedor').value,
+      empresa: el.querySelector('.rf-empresa').value,
+      campamentoDestino: el.querySelector('.rf-campamento').value,
+      ruta: el.querySelector('.rf-ruta').value,
+      observacion: el.querySelector('.rf-observacion').value,
+      articulos: el.querySelector('.rf-articulos').value
+    };
+    crearGuiaEmbarcada(data);
+    el.remove();
+  };
+}
+
+function crearGuiaEmbarcada(data){
+  const {ref, push, set} = window._fb;
+  const newRef = push(ref(window._db, 'guias'));
+  const now = Date.now();
+  set(newRef, {
+    proveedor: data.proveedor,
+    empresa: data.empresa,
+    campamentoDestino: data.campamentoDestino,
+    ruta: data.ruta,
+    observacion: data.observacion,
+    articulos: data.articulos,
+    items: parsearItems(data.articulos),
+    estado:'embarcado_bote',
+    timestamps:{ registrada: now, embarcado_bote: now }
+  });
+}
+
+// ---------- BODEGUERO CAMPAMENTO ----------
+function renderCampamento(main){
+  if(!currentCampamento){
+    main.innerHTML = `
+      <div class="card">
+        <label>Selecciona tu campamento</label>
+        <select id="campSelect" style="margin-top:8px;">
+          <option value="">Seleccionar...</option>
+          ${CAMPAMENTOS.map(c=>`<option value="${c}">${c}</option>`).join('')}
+        </select>
+      </div>`;
+    document.getElementById('campSelect').onchange = (e)=>{
+      currentCampamento = e.target.value;
+      localStorage.setItem('campamento_repuestos', currentCampamento);
+      render();
+    };
+    return;
+  }
+
+  const entries = Object.entries(guiasData)
+    .filter(([id,g])=> g.campamentoDestino===currentCampamento &&
+      (['embarcado_bote','verificado'].includes(g.estado) || g.completo===false ||
+       (verCompletadasCamp && g.estado==='ingresado_bodega' && g.completo!==false)))
+    .sort((a,b)=> (a[1].timestamps?.registrada||0)-(b[1].timestamps?.registrada||0));
+
+  main.innerHTML = `
+    <div class="meta" style="margin-bottom:10px;">Campamento: <b>${currentCampamento}</b>${lockedByUrl ? '' : ' · <span style="text-decoration:underline; cursor:pointer;" id="cambiarCamp">Cambiar</span>'} · <span style="text-decoration:underline; cursor:pointer;" id="toggleCompletadasCamp">${verCompletadasCamp ? 'Ocultar completadas' : 'Ver completadas'}</span></div>
+    <div>${entries.length ? entries.map(([id,g])=>{
+      let actions = '';
+      if(g.estado==='embarcado_bote'){
+        actions = `<div class="actions"><button class="btn btn-primary" data-action="verificar" data-id="${id}">Verificar artículos recibidos</button></div>`;
+      } else if(g.estado==='verificado'){
+        actions = `<div class="actions">
+          <button class="btn btn-primary" data-action="ingreso" data-id="${id}">🔢 Escribir Nº de ingreso a bodega</button>
+          <button class="btn btn-ghost" data-action="editar-verificacion" data-id="${id}">✏️ Corregir verificación</button>
+        </div>`;
+      } else if(g.estado==='ingresado_bodega' && g.completo===false){
+        actions = `<div class="actions">
+          <button class="btn btn-primary" data-action="resolver-faltante" data-id="${id}">✅ Marcar faltante(s) como recibido(s)</button>
+          <button class="btn btn-ghost" data-action="editar-ingreso" data-id="${id}">✏️ Corregir Nº de ingreso</button>
+          <button class="btn btn-ghost" data-action="regresar-verificacion" data-id="${id}">↩️ Regresar a verificación</button>
+        </div>`;
+      }
+      // Si ya está ingresado y completo (sin faltantes), queda cerrada: no se puede editar ni regresar.
+      return renderCard(id,g,actions);
+    }).join('') : '<div class="empty"><b>Nada pendiente</b>No hay repuestos esperando en este campamento.</div>'}</div>
+  `;
+  if(!lockedByUrl){
+    document.getElementById('cambiarCamp').onclick = ()=>{ currentCampamento=null; localStorage.removeItem('campamento_repuestos'); render(); };
+  }
+  document.getElementById('toggleCompletadasCamp').onclick = ()=>{ verCompletadasCamp = !verCompletadasCamp; render(); };
+  main.querySelectorAll('[data-action="verificar"], [data-action="editar-verificacion"]').forEach(btn=>{
+    btn.onclick = ()=> abrirChecklist(btn.dataset.id, guiasData[btn.dataset.id]);
+  });
+  main.querySelectorAll('[data-action="ingreso"], [data-action="editar-ingreso"]').forEach(btn=>{
+    btn.onclick = ()=> abrirIngreso(btn.dataset.id, guiasData[btn.dataset.id]);
+  });
+  main.querySelectorAll('[data-action="resolver-faltante"]').forEach(btn=>{
+    btn.onclick = ()=> abrirResolverFaltante(btn.dataset.id, guiasData[btn.dataset.id]);
+  });
+  main.querySelectorAll('[data-action="regresar-verificacion"]').forEach(btn=>{
+    btn.onclick = ()=>{
+      if(confirm('¿Regresar esta guía al paso de verificación? Vas a tener que volver a verificar los artículos y escribir de nuevo el número de ingreso.')){
+        updateEstado(btn.dataset.id, 'verificado');
+      }
+    };
+  });
+}
+
+function abrirChecklist(id, g){
+  const items = g.items && g.items.length ? g.items : [{cantidad:1, descripcion:'(sin artículos detallados)'}];
+  const faltantesPrevios = (g.faltantes || []).map(normalizarFaltante);
+  const zone = document.getElementById('zone-'+id);
+  zone.innerHTML = `
+    <div class="card" style="margin-top:10px;">
+      <h3 style="margin-bottom:10px;">Verificar artículos — ${g.proveedor||''}</h3>
+      <div class="meta" style="margin-bottom:10px;">Escribe cuántas unidades llegaron realmente de cada artículo (si llegó todo, déjalo igual).</div>
+      ${items.map((it,i)=>{
+        const faltantePrevio = faltantesPrevios.find(f=>f.descripcion===it.descripcion);
+        const recibidaPrevia = faltantePrevio ? Math.max(0, it.cantidad - faltantePrevio.cantidad) : it.cantidad;
+        return `
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px; border-bottom:1px solid var(--line); font-size:14px;">
+          <span>${it.descripcion}</span>
+          <span style="display:flex; align-items:center; gap:6px; white-space:nowrap;">
+            <input type="number" class="chk-cantidad" data-idx="${i}" value="${recibidaPrevia}" min="0" max="${it.cantidad}" style="width:60px; text-align:center;">
+            <span class="meta">de ${it.cantidad}</span>
+          </span>
+        </div>`;
+      }).join('')}
+      <label style="display:block; margin-top:12px; font-size:13px; color:var(--muted);">Observación (opcional) — ej: llegó a otro punto, se redistribuirá después, etc.</label>
+      <textarea id="notaCampamento-${id}" style="min-height:70px; margin-top:6px; width:100%;" placeholder="Escribe aquí cualquier novedad...">${g.notaCampamento||''}</textarea>
+      <div class="actions">
+        <button class="btn btn-ghost" id="cancelarChecklist-${id}">Cancelar</button>
+        <button class="btn btn-primary" id="confirmarChecklist-${id}">Confirmar verificación</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('cancelarChecklist-'+id).onclick = ()=> zone.innerHTML = '';
+  document.getElementById('confirmarChecklist-'+id).onclick = ()=>{
+    const inputs = Array.from(zone.querySelectorAll('.chk-cantidad'));
+    const faltantes = [];
+    inputs.forEach(inp=>{
+      const it = items[inp.dataset.idx];
+      let recibida = parseInt(inp.value);
+      if(isNaN(recibida) || recibida<0) recibida = 0;
+      if(recibida>it.cantidad) recibida = it.cantidad;
+      const faltante = it.cantidad - recibida;
+      if(faltante>0){
+        faltantes.push({ descripcion: it.descripcion, cantidad: faltante });
+      }
+    });
+    const nota = document.getElementById('notaCampamento-'+id).value.trim();
+    updateEstado(id, 'verificado', {
+      faltantes: faltantes,
+      completo: faltantes.length===0,
+      notaCampamento: nota || null
+    });
+    zone.innerHTML = '';
+  };
+}
+
+function abrirIngreso(id, g){
+  const zone = document.getElementById('zone-'+id);
+  zone.innerHTML = `
+    <div class="card" style="margin-top:10px;">
+      <h3 style="margin-bottom:10px;">Nº de ingreso a bodega — ${g.proveedor||''}</h3>
+      <div class="meta" style="margin-bottom:10px;">Escribe el número de ingreso a bodega que ya elaboraste para esta guía.</div>
+      <input type="text" id="numeroIngreso-${id}" placeholder="Ej: 00123" value="${g.numeroIngreso||''}" style="width:100%;">
+      <div class="actions">
+        <button class="btn btn-ghost" id="cancelarIngreso-${id}">Cancelar</button>
+        <button class="btn btn-primary" id="confirmarIngreso-${id}">Confirmar ingreso a bodega</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('cancelarIngreso-'+id).onclick = ()=> zone.innerHTML = '';
+  document.getElementById('confirmarIngreso-'+id).onclick = ()=>{
+    const numero = document.getElementById('numeroIngreso-'+id).value.trim();
+    if(!numero){ alert('Escribe el número de ingreso antes de confirmar.'); return; }
+    updateEstado(id, 'ingresado_bodega', {
+      numeroIngreso: numero,
+      ingresoTimestamp: Date.now()
+    });
+    zone.innerHTML = '';
+  };
+}
+
+function abrirResolverFaltante(id, g){
+  const zone = document.getElementById('zone-'+id);
+  const faltantes = (g.faltantes || []).map(normalizarFaltante);
+  zone.innerHTML = `
+    <div class="card" style="margin-top:10px;">
+      <h3 style="margin-bottom:10px;">Actualizar faltantes — ${g.proveedor||''}</h3>
+      <div class="meta" style="margin-bottom:10px;">Escribe cuántas unidades de cada faltante ya llegaron. Lo que no marques sigue pendiente.</div>
+      ${faltantes.map((f,i)=>`
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px; border-bottom:1px solid var(--line); font-size:14px;">
+          <span>${f.descripcion}</span>
+          <span style="display:flex; align-items:center; gap:6px; white-space:nowrap;">
+            <input type="number" class="chk-resuelto" data-idx="${i}" value="0" min="0" max="${f.cantidad}" style="width:60px; text-align:center;">
+            <span class="meta">de ${f.cantidad} pendiente(s)</span>
+          </span>
+        </div>
+      `).join('')}
+      <div class="actions">
+        <button class="btn btn-ghost" id="cancelarResolver-${id}">Cancelar</button>
+        <button class="btn btn-primary" id="confirmarResolver-${id}">Guardar</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('cancelarResolver-'+id).onclick = ()=> zone.innerHTML = '';
+  document.getElementById('confirmarResolver-'+id).onclick = ()=>{
+    const inputs = Array.from(zone.querySelectorAll('.chk-resuelto'));
+    const siguenFaltando = [];
+    inputs.forEach(inp=>{
+      const f = faltantes[inp.dataset.idx];
+      let llegaron = parseInt(inp.value);
+      if(isNaN(llegaron) || llegaron<0) llegaron = 0;
+      if(llegaron>f.cantidad) llegaron = f.cantidad;
+      const restante = f.cantidad - llegaron;
+      if(restante>0){
+        siguenFaltando.push({ descripcion: f.descripcion, cantidad: restante });
+      }
+    });
+    updateEstado(id, g.estado, {
+      faltantes: siguenFaltando,
+      completo: siguenFaltando.length===0
+    });
+    zone.innerHTML = '';
+  };
+}
+</script>
+</body>
+</html>

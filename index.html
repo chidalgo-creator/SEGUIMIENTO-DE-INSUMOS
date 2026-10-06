@@ -170,6 +170,43 @@ let busquedaAdmin = '';
 let guiasData = {};
 let filtroActivo = 'pendientes';
 let lockedByUrl = false;
+// Filtro por fecha (admin)
+let fechaTipo = 'documento';   // 'documento' | 'campamento'
+let fechaDesde = '';           // yyyy-mm-dd (formato del input date)
+let fechaHasta = '';
+
+// ---------- FECHAS ----------
+// Fecha del documento: se guarda como texto "dd/mm/aaaa" (viene del JSON de Claude o del formulario)
+function parseFechaDoc(s){
+  if(!s) return null;
+  const m = String(s).trim().match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+  if(!m) return null;
+  let y = parseInt(m[3]); if(y<100) y += 2000;
+  const d = new Date(y, parseInt(m[2])-1, parseInt(m[1]));
+  return isNaN(d) ? null : d;
+}
+function fmtFecha(d){
+  if(!d) return '';
+  const dd = String(d.getDate()).padStart(2,'0');
+  const mm = String(d.getMonth()+1).padStart(2,'0');
+  return `${dd}/${mm}/${d.getFullYear()}`;
+}
+function normalizarFechaDoc(s){
+  const d = parseFechaDoc(s);
+  return d ? fmtFecha(d) : '';
+}
+// Fecha de recepción en campamento: cuando el bodeguero verificó por primera vez.
+// Guías antiguas (sin el campo nuevo) usan la fecha de verificación o de ingreso a bodega.
+function fechaCampamentoTs(g){
+  return g.fechaRecepcionCampamento || g.timestamps?.verificado || g.ingresoTimestamp || null;
+}
+function fechaDocDate(g){ return parseFechaDoc(g.fechaDocumento); }
+function fechaCampDate(g){ const ts = fechaCampamentoTs(g); return ts ? new Date(ts) : null; }
+function inputToDate(v, finDelDia){
+  if(!v) return null;
+  const [y,m,d] = v.split('-').map(Number);
+  return finDelDia ? new Date(y, m-1, d, 23, 59, 59, 999) : new Date(y, m-1, d);
+}
 
 // Si el link trae ?campamento=BASE 1 o ?rol=muelle / ?rol=admin,
 // se fija ese rol/campamento y se oculta el selector de arriba.
@@ -286,6 +323,7 @@ function renderCard(id, g, actionsHtml, mostrarBorrar){
     </div>
     <div class="meta">Ruta: <b>${g.ruta||'—'}</b> · Destino: <b>${g.campamentoDestino||'—'}</b></div>
     ${g.observacion ? `<div class="meta">${g.observacion}</div>` : ''}
+    <div class="meta">📄 Fecha documento: <b>${g.fechaDocumento || '—'}</b> · 🏕 Recibido en campamento: <b>${fechaCampDate(g) ? fmtFecha(fechaCampDate(g)) : 'Pendiente'}</b></div>
     ${g.articulos ? `<div class="articulos">${g.articulos.replace(/\n/g,'<br>')}</div>` : ''}
     ${g.faltantes && g.faltantes.length ? `<div class="meta" style="color:var(--danger); font-weight:700; margin-top:6px;">Faltó: ${g.faltantes.map(normalizarFaltante).map(f=>`${f.cantidad}x ${f.descripcion}`).join(', ')}</div>` : ''}
     ${g.notaCampamento ? `<div class="meta" style="margin-top:6px; font-style:italic;">📝 Nota del bodeguero: ${g.notaCampamento}</div>` : ''}
@@ -311,20 +349,32 @@ function render(){
 
 // ---------- ADMIN ----------
 function renderAdmin(main){
-  const entries = Object.entries(guiasData).sort((a,b)=> (b[1].timestamps?.registrada||0)-(a[1].timestamps?.registrada||0));
-  const pendientesCount = entries.filter(([id,g])=>g.completo===false).length;
+  const todas = Object.entries(guiasData).sort((a,b)=> (b[1].timestamps?.registrada||0)-(a[1].timestamps?.registrada||0));
+  const pendientesCount = todas.filter(([id,g])=>g.completo===false).length;
+
+  // Filtro por rango de fechas (se aplica antes de la búsqueda y de los filtros de estado)
+  const desde = inputToDate(fechaDesde, false);
+  const hasta = inputToDate(fechaHasta, true);
+  const filtrandoFecha = !!(desde || hasta);
+  const entries = filtrandoFecha ? todas.filter(([id,g])=>{
+    const d = fechaTipo==='documento' ? fechaDocDate(g) : fechaCampDate(g);
+    if(!d) return false;
+    if(desde && d < desde) return false;
+    if(hasta && d > hasta) return false;
+    return true;
+  }) : todas;
 
   const q = busquedaAdmin.trim().toLowerCase();
   const buscando = q!=='';
-  const porFiltro = filtroActivo==='pendientes' ? entries.filter(([id,g])=> !(g.estado==='ingresado_bodega' && g.completo!==false)) :
-     filtroActivo==='alertas' ? entries.filter(([id,g])=>alertLevel(g)!=='ok') :
-     filtroActivo==='incompletas' ? entries.filter(([id,g])=>g.completo===false) :
-     filtroActivo==='ingresado_bodega' ? entries.filter(([id,g])=>g.estado==='ingresado_bodega' && g.completo!==false) :
-     entries.filter(([id,g])=>g.estado===filtroActivo);
   const filtered = buscando
-    ? porFiltro.filter(([id,g])=> [g.proveedor,g.empresa,g.campamentoDestino,g.numeroIngreso,g.observacion,g.ruta]
+    ? entries.filter(([id,g])=> [g.proveedor,g.empresa,g.campamentoDestino,g.numeroIngreso,g.observacion,g.ruta,
+          g.fechaDocumento, fechaCampDate(g) ? fmtFecha(fechaCampDate(g)) : '']
         .filter(Boolean).some(v=> String(v).toLowerCase().includes(q)))
-    : porFiltro;
+    : (filtroActivo==='pendientes' ? entries.filter(([id,g])=> !(g.estado==='ingresado_bodega' && g.completo!==false)) :
+       filtroActivo==='alertas' ? entries.filter(([id,g])=>alertLevel(g)!=='ok') :
+       filtroActivo==='incompletas' ? entries.filter(([id,g])=>g.completo===false) :
+       filtroActivo==='ingresado_bodega' ? entries.filter(([id,g])=>g.estado==='ingresado_bodega' && g.completo!==false) :
+       entries.filter(([id,g])=>g.estado===filtroActivo));
 
   main.innerHTML = `
     <div class="toggle-form" id="toggleUpload">📷 Subir foto(s) de guía(s)</div>
@@ -334,14 +384,29 @@ function renderAdmin(main){
     <div id="importZone"></div>
     <div id="reviewZone"></div>
     <div id="reporteZone"></div>
-    <input type="text" id="buscarGuia" placeholder="🔍 Buscar por proveedor, empresa, campamento o Nº de ingreso..." value="${busquedaAdmin}" style="width:100%; margin:12px 0;">
-    <div class="filter-row">
+    <input type="text" id="buscarGuia" placeholder="🔍 Buscar por proveedor, empresa, campamento, Nº de ingreso o fecha (dd/mm/aaaa)..." value="${busquedaAdmin}" style="width:100%; margin:12px 0 8px;">
+    <div class="card" style="padding:10px; margin-bottom:12px;">
+      <div class="grid2" style="grid-template-columns:1fr 1fr 1fr; align-items:end;">
+        <div class="field"><label>Fecha de</label>
+          <select id="fechaTipo">
+            <option value="documento" ${fechaTipo==='documento'?'selected':''}>Documento</option>
+            <option value="campamento" ${fechaTipo==='campamento'?'selected':''}>Campamento</option>
+          </select>
+        </div>
+        <div class="field"><label>Desde</label><input type="date" id="fechaDesde" value="${fechaDesde}"></div>
+        <div class="field"><label>Hasta</label><input type="date" id="fechaHasta" value="${fechaHasta}"></div>
+      </div>
+      ${filtrandoFecha ? `<div class="meta" style="margin-top:6px;">Mostrando ${entries.length} guía(s) por fecha de ${fechaTipo} · <span style="text-decoration:underline; cursor:pointer;" id="limpiarFechas">Quitar filtro de fecha</span></div>` : ''}
+    </div>
+    ${buscando
+      ? `<div class="meta" style="margin-bottom:10px;">Resultados para "<b>${busquedaAdmin}</b>" (${filtered.length}) · <span style="text-decoration:underline; cursor:pointer;" id="limpiarBusqueda">Limpiar búsqueda</span></div>`
+      : `<div class="filter-row">
           <div class="filter-chip ${filtroActivo==='pendientes'?'active':''}" data-f="pendientes">Pendientes (${entries.filter(([id,g])=> !(g.estado==='ingresado_bodega' && g.completo!==false)).length})</div>
           <div class="filter-chip ${filtroActivo==='alertas'?'active':''}" data-f="alertas">⚠ Alertas (${entries.filter(([id,g])=>alertLevel(g)!=='ok').length})</div>
           <div class="filter-chip ${filtroActivo==='incompletas'?'active':''}" data-f="incompletas">⚠ Incompletas (${entries.filter(([id,g])=>g.completo===false).length})</div>
           <div class="filter-chip ${filtroActivo==='ingresado_bodega'?'active':''}" data-f="ingresado_bodega">Completadas (${entries.filter(([id,g])=>g.estado==='ingresado_bodega' && g.completo!==false).length})</div>
-        </div>
-    ${buscando ? `<div class="meta" style="margin-bottom:10px;">Resultados para "<b>${busquedaAdmin}</b>" en esta pestaña (${filtered.length}) · <span style="text-decoration:underline; cursor:pointer;" id="limpiarBusqueda">Limpiar búsqueda</span></div>` : ''}
+        </div>`
+    }
     <div id="list">${filtered.length ? filtered.map(([id,g])=>renderCard(id,g,'',true)).join('') : '<div class="empty"><b>Sin resultados</b>No hay guías que coincidan.</div>'}</div>
   `;
 
@@ -363,12 +428,19 @@ function renderAdmin(main){
   const searchInput = document.getElementById('buscarGuia');
   searchInput.oninput = (e)=>{ busquedaAdmin = e.target.value; renderAdmin(main); };
   if(busquedaAdmin){ searchInput.focus(); searchInput.setSelectionRange(busquedaAdmin.length, busquedaAdmin.length); }
+  document.getElementById('fechaTipo').onchange = (e)=>{ fechaTipo = e.target.value; renderAdmin(main); };
+  document.getElementById('fechaDesde').onchange = (e)=>{ fechaDesde = e.target.value; renderAdmin(main); };
+  document.getElementById('fechaHasta').onchange = (e)=>{ fechaHasta = e.target.value; renderAdmin(main); };
+  if(filtrandoFecha){
+    document.getElementById('limpiarFechas').onclick = ()=>{ fechaDesde=''; fechaHasta=''; renderAdmin(main); };
+  }
   if(buscando){
     document.getElementById('limpiarBusqueda').onclick = ()=>{ busquedaAdmin=''; renderAdmin(main); };
+  } else {
+    document.querySelectorAll('.filter-chip').forEach(chip=>{
+      chip.onclick = ()=>{ filtroActivo = chip.dataset.f; renderAdmin(main); };
+    });
   }
-  document.querySelectorAll('.filter-chip').forEach(chip=>{
-    chip.onclick = ()=>{ filtroActivo = chip.dataset.f; renderAdmin(main); };
-  });
 }
 
 function borrarGuia(id){
@@ -455,7 +527,7 @@ function formularioImportar(){
   <div class="card">
     <h3 style="margin-bottom:10px;">Pega aquí el texto que te dio Claude</h3>
     <div class="meta" style="margin-bottom:8px;">Sube las fotos de las guías en el chat con Claude, pídele "conviértelas a JSON para la app", copia el bloque completo y pégalo aquí.</div>
-    <textarea id="jsonImportBox" style="min-height:160px; font-family:monospace; font-size:12px;" placeholder='[{"proveedor":"...","empresa":"...","campamentoDestino":"...","articulos":"..."}]'></textarea>
+    <textarea id="jsonImportBox" style="min-height:160px; font-family:monospace; font-size:12px;" placeholder='[{"proveedor":"...","empresa":"...","campamentoDestino":"...","fecha":"dd/mm/aaaa","articulos":"..."}]'></textarea>
     <div class="actions">
       <button class="btn btn-ghost" id="cancelarImport">Cancelar</button>
       <button class="btn btn-primary" id="confirmarImport">Importar todas</button>
@@ -479,6 +551,7 @@ function attachImportHandler(){
         campamentoDestino: CAMPAMENTOS.includes(item.campamentoDestino) ? item.campamentoDestino : '',
         ruta: item.ruta||'',
         observacion: item.observacion||'',
+        fechaDocumento: normalizarFechaDoc(item.fecha || item.fechaDocumento),
         articulos: item.articulos||''
       }));
       resultEl.style.color = 'var(--ok)';
@@ -620,6 +693,7 @@ function renderReviewCard(cardId, ext, imgUrl){
     </div>
     <div class="field" style="margin-top:8px;"><label>Ruta</label><input class="rf-ruta" value="${ext.ruta||''}"></div>
     <div class="field" style="margin-top:8px;"><label>Observación</label><input class="rf-observacion" value="${ext.observacion||''}"></div>
+    <div class="field" style="margin-top:8px;"><label>Fecha del documento</label><input type="date" class="rf-fecha"></div>
     <div class="field" style="margin-top:8px;"><label>Artículos (1 línea por ítem: cantidad + descripción)</label>
       <div class="meta" style="margin-bottom:4px;">🎤 Tip: toca el campo y usa el micrófono del teclado para dictar en vez de escribir</div>
       <textarea class="rf-articulos" placeholder="Ej: 2 filtros de aceite&#10;1 bomba de agua">${ext.articulos||''}</textarea>
@@ -637,6 +711,7 @@ function renderReviewCard(cardId, ext, imgUrl){
       campamentoDestino: el.querySelector('.rf-campamento').value,
       ruta: el.querySelector('.rf-ruta').value,
       observacion: el.querySelector('.rf-observacion').value,
+      fechaDocumento: (()=>{ const d = inputToDate(el.querySelector('.rf-fecha').value); return d ? fmtFecha(d) : ''; })(),
       articulos: el.querySelector('.rf-articulos').value
     };
     crearGuiaEmbarcada(data);
@@ -654,6 +729,7 @@ function crearGuiaEmbarcada(data){
     campamentoDestino: data.campamentoDestino,
     ruta: data.ruta,
     observacion: data.observacion,
+    fechaDocumento: data.fechaDocumento || '',
     articulos: data.articulos,
     items: parsearItems(data.articulos),
     estado:'embarcado_bote',
@@ -773,11 +849,14 @@ function abrirChecklist(id, g){
       }
     });
     const nota = document.getElementById('notaCampamento-'+id).value.trim();
-    updateEstado(id, 'verificado', {
+    const extra = {
       faltantes: faltantes,
       completo: faltantes.length===0,
       notaCampamento: nota || null
-    });
+    };
+    // Se guarda solo la PRIMERA vez que el bodeguero verifica, para que "Corregir verificación" no cambie la fecha de llegada
+    if(!g.fechaRecepcionCampamento) extra.fechaRecepcionCampamento = g.timestamps?.verificado || Date.now();
+    updateEstado(id, 'verificado', extra);
     zone.innerHTML = '';
   };
 }
